@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary font-sans antialiased;
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #111111;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a2a;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b82f6;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-blue-electric hover:bg-blue-hover text-white font-semibold px-6 py-3 rounded-xl
+           transition-all duration-200 hover:shadow-glow-blue active:scale-95 disabled:opacity-50
+           disabled:cursor-not-allowed disabled:hover:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply bg-bg-secondary hover:bg-bg-card text-text-primary font-semibold px-6 py-3 rounded-xl
+           border border-border-subtle transition-all duration-200 hover:border-border
+           active:scale-95 disabled:opacity-50;
+  }
+
+  .btn-danger {
+    @apply bg-red-disconnect/10 hover:bg-red-disconnect/20 text-red-disconnect font-semibold
+           px-6 py-3 rounded-xl border border-red-disconnect/20 hover:border-red-disconnect/40
+           transition-all duration-200 active:scale-95;
+  }
+
+  .card {
+    @apply bg-bg-secondary border border-border-subtle rounded-2xl;
+  }
+
+  .input-base {
+    @apply bg-bg-card border border-border-subtle text-text-primary rounded-xl px-4 py-3
+           placeholder:text-text-muted focus:outline-none focus:border-blue-electric
+           focus:ring-1 focus:ring-blue-electric/30 transition-all duration-200 w-full;
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-dot-online {
+    @apply status-dot bg-green-connected shadow-glow-green animate-pulse;
+  }
+
+  .status-dot-offline {
+    @apply status-dot bg-text-muted;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-stage {
+    @apply badge bg-blue-electric/10 text-blue-electric border border-blue-electric/20;
+  }
+
+  .badge-sector {
+    @apply badge bg-purple-500/10 text-purple-400 border border-purple-500/20;
+  }
+
+  .badge-looking {
+    @apply badge bg-green-connected/10 text-green-connected border border-green-connected/20;
+  }
+}
+
+/* Video call pip container */
+.video-pip {
+  @apply absolute bottom-4 right-4 w-36 h-24 md:w-48 md:h-32 rounded-xl overflow-hidden
+         border-2 border-border shadow-2xl z-20;
+}
+
+/* Pulsing dot animation for waiting state */
+@keyframes waiting-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.6; }
+}
+
+.waiting-dot {
+  animation: waiting-pulse 1.2s ease-in-out infinite;
+}
+
+.waiting-dot:nth-child(2) { animation-delay: 0.2s; }
+.waiting-dot:nth-child(3) { animation-delay: 0.4s; }

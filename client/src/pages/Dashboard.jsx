@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Zap, Filter, User, Bookmark, Clock, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
-import { userApi } from '../services/api';
+import { connectionApi } from '../services/api';
 import { ROLES, STAGES, LANGUAGES, TAGS, STAGE_COLORS } from '../utils/constants';
 import FounderCard from '../components/ui/FounderCard';
 import Spinner from '../components/ui/Spinner';
@@ -27,7 +27,7 @@ export default function Dashboard() {
   }));
 
   useEffect(() => {
-    userApi.getContacts()
+    connectionApi.list()
       .then(({ data }) => setContacts(data.slice(0, 5)))
       .catch(() => {})
       .finally(() => setLoadingContacts(false));
@@ -236,9 +236,9 @@ export default function Dashboard() {
               ) : (
                 <div className="space-y-3">
                   {contacts.map(c => (
-                    <FounderCard key={c._id} founder={c.savedUserId} compact />
+                    <FounderCard key={c._id} founder={c.peer} compact />
                   ))}
-                  <a href="/contacts" className="block text-center text-blue-electric text-xs hover:underline mt-2">
+                  <a href="/connections" className="block text-center text-blue-electric text-xs hover:underline mt-2">
                     View all →
                   </a>
                 </div>

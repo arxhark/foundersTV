@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Room = require('../models/Room');
+const { cleanText } = require('../utils/moderation');
 const {
   joinQueue,
   removeFromQueue,
@@ -10,8 +12,14 @@ const {
   MATCH_TIMEOUT_MS,
 } = require('./matchmaking');
 
-// Connected users: Map<socketId, { userId, userProfile, blockedUsers }>
+// Connected users: Map<socketId, { userId, userProfile, blockedUsers, skips }>
 const connectedUsers = new Map();
+
+// Private room membership: Map<roomId, Set<socketId>>
+const privateRooms = new Map();
+
+const SKIP_LIMIT = 30;        // max skips
+const SKIP_WINDOW_MS = 3_600_000; // per hour
 
 const initSocket = (io, app) => {
   // Authenticate socket connections via JWT cookie or auth token
@@ -43,7 +51,11 @@ const initSocket = (io, app) => {
       userId: socket.user._id.toString(),
       userProfile: socket.user.toPublicProfile(),
       blockedUsers: (socket.user.blockedUsers || []).map((id) => id.toString()),
+      skips: [], // timestamps of recent skips for rate limiting
     });
+
+    // Personal room for direct notifications (e.g. mutual connection)
+    socket.join(`user:${socket.user._id}`);
 
     app.set('onlineCount', connectedUsers.size);
     io.emit('online-count', connectedUsers.size);
@@ -108,6 +120,18 @@ const initSocket = (io, app) => {
 
     // --- Call control ---
     socket.on('next-founder', ({ filters } = {}) => {
+      // Rate limit: max SKIP_LIMIT skips per hour per user
+      const ctx = connectedUsers.get(socket.id);
+      if (ctx) {
+        const now = Date.now();
+        ctx.skips = ctx.skips.filter((t) => now - t < SKIP_WINDOW_MS);
+        if (ctx.skips.length >= SKIP_LIMIT) {
+          socket.emit('skip-limit', { retryAfterMs: SKIP_WINDOW_MS - (now - ctx.skips[0]) });
+          return;
+        }
+        ctx.skips.push(now);
+      }
+
       clearTimeout(socket._queueTimeout);
       const peer = leaveRoom(socket.id);
       if (peer) io.to(peer).emit('peer-disconnected');
@@ -121,13 +145,13 @@ const initSocket = (io, app) => {
       if (peer) io.to(peer).emit('peer-disconnected');
     });
 
-    // --- Text chat during call ---
+    // --- Text chat during call (profanity-filtered) ---
     socket.on('chat-message', ({ message }) => {
       if (!message?.trim()) return;
       const peer = getPeerSocket(socket.id);
       if (peer) {
         io.to(peer).emit('chat-message', {
-          message: message.slice(0, 500),
+          message: cleanText(message.slice(0, 500)),
           from: socket.user.name,
           timestamp: Date.now(),
         });
@@ -141,6 +165,52 @@ const initSocket = (io, app) => {
       const peer = getPeerSocket(socket.id);
       if (peer) io.to(peer).emit('reaction', { emoji });
     });
+
+    // --- Private rooms (mesh, up to 4 participants) ---
+    const leavePrivateRoom = () => {
+      const roomId = socket._privateRoom;
+      if (!roomId) return;
+      const members = privateRooms.get(roomId);
+      if (members) {
+        members.delete(socket.id);
+        if (members.size === 0) privateRooms.delete(roomId);
+      }
+      socket.leave(`private:${roomId}`);
+      socket.to(`private:${roomId}`).emit('room:peer-left', { socketId: socket.id });
+      socket._privateRoom = null;
+    };
+
+    socket.on('room:join', ({ roomId }) => {
+      if (!roomId || typeof roomId !== 'string') return;
+      const members = privateRooms.get(roomId) || new Set();
+      if (members.size >= 4) return socket.emit('room:full');
+
+      socket._privateRoom = roomId;
+      members.add(socket.id);
+      privateRooms.set(roomId, members);
+      socket.join(`private:${roomId}`);
+
+      // Send the newcomer the list of existing peers (with profiles)
+      const peers = [...members]
+        .filter((id) => id !== socket.id)
+        .map((id) => ({ socketId: id, profile: connectedUsers.get(id)?.userProfile }));
+      socket.emit('room:peers', { peers, self: socket.id });
+
+      // Tell existing peers about the newcomer
+      socket.to(`private:${roomId}`).emit('room:peer-joined', {
+        socketId: socket.id,
+        profile: connectedUsers.get(socket.id)?.userProfile,
+      });
+
+      Room.findOneAndUpdate({ roomId }, { lastActivityAt: new Date() }).catch(() => {});
+    });
+
+    // Mesh signaling: relay directly to a specific peer socket
+    socket.on('room:signal', ({ to, data }) => {
+      if (to) io.to(to).emit('room:signal', { from: socket.id, data });
+    });
+
+    socket.on('room:leave', leavePrivateRoom);
 
     // --- Stats on call end ---
     socket.on('call-ended', async ({ durationSeconds }) => {
@@ -161,6 +231,7 @@ const initSocket = (io, app) => {
       removeFromQueue(socket.id);
       const peer = leaveRoom(socket.id);
       if (peer) io.to(peer).emit('peer-disconnected');
+      leavePrivateRoom();
 
       connectedUsers.delete(socket.id);
       app.set('onlineCount', connectedUsers.size);

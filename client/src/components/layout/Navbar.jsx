@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { LogOut, User, Bookmark, Zap } from 'lucide-react';
+import { LogOut, User, Users, Zap, Newspaper } from 'lucide-react';
 
 const Logo = () => (
   <Link to="/" className="flex items-center gap-2">
@@ -56,13 +56,23 @@ export default function Navbar() {
               </Link>
 
               <Link
-                to="/contacts"
+                to="/feed"
                 className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium
                            text-text-secondary hover:text-text-primary hover:bg-bg-secondary
                            transition-all duration-200"
               >
-                <Bookmark size={16} />
-                <span className="hidden sm:inline">Contacts</span>
+                <Newspaper size={16} />
+                <span className="hidden sm:inline">Feed</span>
+              </Link>
+
+              <Link
+                to="/connections"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium
+                           text-text-secondary hover:text-text-primary hover:bg-bg-secondary
+                           transition-all duration-200"
+              >
+                <Users size={16} />
+                <span className="hidden sm:inline">Connections</span>
               </Link>
 
               <Link to="/profile" className="flex items-center gap-1.5 group">

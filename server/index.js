@@ -13,6 +13,9 @@ const passport = require('./config/passport');
 const initSocket = require('./socket');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
+const connectionRoutes = require('./routes/connections');
+const postRoutes = require('./routes/posts');
+const roomRoutes = require('./routes/rooms');
 
 const app = express();
 const server = http.createServer(app);
@@ -81,6 +84,9 @@ app.use(passport.initialize());
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/connections', connectionRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/rooms', roomRoutes);
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 // 404 for unknown API routes
@@ -107,6 +113,8 @@ const io = new Server(server, {
   },
 });
 
+// Expose io to REST controllers (e.g. mutual-connection notifications)
+app.set('io', io);
 initSocket(io, app);
 
 // ── Start ──────────────────────────────────────────────────────────────────────

@@ -19,6 +19,8 @@ api.interceptors.response.use(
 export const authApi = {
   getMe: () => api.get('/api/auth/me'),
   logout: () => api.post('/api/auth/logout'),
+  getProviders: () => api.get('/api/auth/providers'),
+  requestMagicLink: (email) => api.post('/api/auth/magic/request', { email }),
 };
 
 export const userApi = {

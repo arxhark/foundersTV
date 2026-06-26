@@ -6,6 +6,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
 
 const connectDB = require('./config/db');
 const passport = require('./config/passport');
@@ -73,6 +74,8 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions)); // handle preflight for all routes
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+// Strip $ and . from user-supplied keys to prevent NoSQL injection attacks
+app.use(mongoSanitize());
 app.use(passport.initialize());
 
 // ── Routes ─────────────────────────────────────────────────────────────────────

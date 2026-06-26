@@ -2,46 +2,28 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Connection = require('../models/Connection');
 const Report = require('../models/Report');
-
-// Fields a user is never allowed to write directly via the API.
-// Stats are incremented server-side only; googleId and email come from OAuth.
-const PROTECTED_FIELDS = ['googleId', 'email', 'stats', 'isActive', 'onboardingComplete', '_id', '__v'];
-
-const stripProtected = (obj) => {
-  const clean = { ...obj };
-  PROTECTED_FIELDS.forEach((f) => delete clean[f]);
-  return clean;
-};
-
-// Whitelist of fields the user may update on their own profile
-const ALLOWED_PROFILE_FIELDS = ['name', 'country', 'startup', 'stage', 'sector', 'looking_for', 'linkedin', 'photo'];
+const { validateProfile } = require('../utils/validators');
 
 const updateProfile = async (req, res) => {
   try {
-    const raw = stripProtected(req.body);
+    // validateProfile only returns known, type/format-checked fields.
+    // Protected fields (googleId, email, stats, isPro…) can never be set here.
+    const { value: updates, errors, valid } = validateProfile(req.body);
 
-    // Build update from whitelisted fields only
-    const updates = {};
-    ALLOWED_PROFILE_FIELDS.forEach((f) => {
-      if (f in raw) updates[f] = raw[f];
-    });
-
-    if (updates.looking_for) {
-      updates.looking_for = Array.isArray(updates.looking_for)
-        ? updates.looking_for
-        : [updates.looking_for];
+    if (!valid) {
+      return res.status(400).json({ error: 'Validation failed', fields: errors });
     }
 
-    if (req.file) updates.photo = req.file.path;
+    if (req.file) updates.photo = req.file.path; // Cloudinary URL
 
-    // Mark onboarding complete only server-side — not from client input
+    // onboarding completion is decided server-side, not from client input
     updates.onboardingComplete = true;
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
       updates,
       { new: true, runValidators: true }
-    ).select('-googleId -__v');
+    ).select('-googleId -appleId -__v');
 
     res.json(user);
   } catch (err) {
@@ -66,7 +48,7 @@ const togglePause = async (req, res) => {
 const getContacts = async (req, res) => {
   try {
     const connections = await Connection.find({ userId: req.user._id })
-      .populate('savedUserId', 'name photo country startup stage sector linkedin looking_for')
+      .populate('savedUserId', 'name photo country title projectBio role stage tags lookingFor language linkedin github twitter website isVerified')
       .sort({ connectedAt: -1 });
     res.json(connections);
   } catch (err) {

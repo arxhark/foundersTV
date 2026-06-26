@@ -48,6 +48,7 @@ export default function Room() {
   const [showReport, setShowReport] = useState(false);
   const [reportSent, setReportSent] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [reactions, setReactions] = useState([]);
 
   const timerRef = useRef(null);
   const callStartRef = useRef(null);
@@ -111,17 +112,20 @@ export default function Room() {
   useEffect(() => {
     if (!socket) return;
 
-    const onMatchFound = async ({ peer: peerProfile }) => {
+    const onMatchFound = async ({ peer: peerProfile, initiator }) => {
       setPeer(peerProfile);
       setCallState(CALL_STATES.CONNECTED);
       setMessages([]);
+      setReactions([]);
       setSaved(false);
       startTimer();
 
-      // Coin flip: lower socket id is initiator
-      isInitiatorRef.current = socket.id < peerProfile._id?.toString();
+      // The server assigns who creates the offer to avoid WebRTC glare
+      isInitiatorRef.current = !!initiator;
       if (isInitiatorRef.current) await initiateCall();
     };
+
+    const onReaction = ({ emoji }) => spawnReaction(emoji);
 
     const onWaiting = () => setCallState(CALL_STATES.WAITING);
     const onTimeout = () => { resetCall(); setCallState(CALL_STATES.TIMEOUT); };
@@ -143,6 +147,7 @@ export default function Room() {
     socket.on('webrtc-answer', handleAnswer);
     socket.on('ice-candidate', handleIceCandidate);
     socket.on('chat-message', onChatMessage);
+    socket.on('reaction', onReaction);
 
     return () => {
       socket.off('match-found', onMatchFound);
@@ -153,6 +158,7 @@ export default function Room() {
       socket.off('webrtc-answer', handleAnswer);
       socket.off('ice-candidate', handleIceCandidate);
       socket.off('chat-message', onChatMessage);
+      socket.off('reaction', onReaction);
     };
   }, [socket, filters, initiateCall, handleOffer, handleAnswer, handleIceCandidate, resetCall]);
 
@@ -163,8 +169,21 @@ export default function Room() {
 
   const handleNext = () => {
     resetCall();
-    socket?.emit('next-founder');
+    socket?.emit('next-founder', { filters });
     setCallState(CALL_STATES.WAITING);
+  };
+
+  // Spawn a floating reaction that drifts up and removes itself
+  const spawnReaction = (emoji) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const left = 20 + Math.random() * 50; // random horizontal position (%)
+    setReactions((prev) => [...prev, { id, emoji, left }]);
+    setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2600);
+  };
+
+  const sendReaction = (emoji) => {
+    socket?.emit('reaction', { emoji });
+    spawnReaction(emoji);
   };
 
   const handleLeave = () => {
@@ -355,6 +374,25 @@ export default function Room() {
                     label="You"
                   />
                 </div>
+
+                {/* Floating reactions */}
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                  <AnimatePresence>
+                    {reactions.map((r) => (
+                      <motion.div
+                        key={r.id}
+                        initial={{ opacity: 0, y: 0, scale: 0.5 }}
+                        animate={{ opacity: 1, y: -220, scale: 1.4 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 2.4, ease: 'easeOut' }}
+                        className="absolute bottom-24 text-5xl"
+                        style={{ left: `${r.left}%` }}
+                      >
+                        {r.emoji}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -426,6 +464,22 @@ export default function Room() {
 
       {/* Controls bar */}
       <div className="border-t border-border-subtle bg-bg-secondary/80 backdrop-blur px-4 py-4">
+        {/* Reactions row */}
+        {callState === CALL_STATES.CONNECTED && (
+          <div className="flex items-center justify-center gap-2 mb-3">
+            {['👏', '🔥', '🤝', '💡'].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => sendReaction(emoji)}
+                className="text-xl w-10 h-10 rounded-full border border-border-subtle hover:border-blue-electric/40
+                           hover:bg-bg-card active:scale-90 transition-all"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <button
             onClick={toggleMute}

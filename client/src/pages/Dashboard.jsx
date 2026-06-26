@@ -5,19 +5,26 @@ import { Zap, Filter, User, Bookmark, Clock, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { userApi } from '../services/api';
-import { STAGES, SECTORS, LOOKING_FOR, STAGE_COLORS } from '../utils/constants';
+import { ROLES, STAGES, LANGUAGES, TAGS, STAGE_COLORS } from '../utils/constants';
 import FounderCard from '../components/ui/FounderCard';
 import Spinner from '../components/ui/Spinner';
 
+const EMPTY_FILTERS = { role: '', stage: '', language: '', tags: [] };
+
 export default function Dashboard() {
   const { user } = useAuth();
-  const { socket, connected, onlineCount } = useSocket();
+  const { connected, onlineCount } = useSocket();
   const navigate = useNavigate();
 
   const [contacts, setContacts] = useState([]);
   const [loadingContacts, setLoadingContacts] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({ stage: '', sector: '', looking_for: '' });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+
+  const toggleTag = (tag) => setFilters((f) => ({
+    ...f,
+    tags: f.tags.includes(tag) ? f.tags.filter((t) => t !== tag) : [...f.tags, tag],
+  }));
 
   useEffect(() => {
     userApi.getContacts()
@@ -56,16 +63,21 @@ export default function Dashboard() {
                   </div>
                 )}
                 <h3 className="font-bold mt-3">{user?.name}</h3>
-                {user?.startup && (
-                  <p className="text-text-secondary text-sm mt-1 truncate">{user.startup}</p>
+                {user?.title && (
+                  <p className="text-text-secondary text-sm mt-1 truncate">{user.title}</p>
+                )}
+                {user?.projectBio && (
+                  <p className="text-text-muted text-xs mt-1 line-clamp-2">{user.projectBio}</p>
                 )}
                 <div className="flex flex-wrap gap-1.5 justify-center mt-3">
                   {user?.stage && (
                     <span className={`badge border text-xs ${stageColor}`}>{user.stage}</span>
                   )}
-                  {user?.sector && (
-                    <span className="badge-sector text-xs">{user.sector}</span>
-                  )}
+                  {(user?.tags || []).slice(0, 2).map((tag) => (
+                    <span key={tag} className="badge bg-blue-electric/10 text-blue-electric border border-blue-electric/20 font-mono text-xs">
+                      #{tag}
+                    </span>
+                  ))}
                 </div>
               </div>
 
@@ -147,46 +159,53 @@ export default function Dashboard() {
                   Filters reduce the pool of potential matches. Leave empty for fastest pairing.
                 </p>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Role</label>
+                    <select className="input-base text-sm" value={filters.role}
+                      onChange={e => setFilters(f => ({ ...f, role: e.target.value }))}>
+                      <option value="">Any role</option>
+                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-text-secondary mb-1.5">Stage</label>
+                    <select className="input-base text-sm" value={filters.stage}
+                      onChange={e => setFilters(f => ({ ...f, stage: e.target.value }))}>
+                      <option value="">Any stage</option>
+                      {STAGES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Stage</label>
-                  <select
-                    className="input-base text-sm"
-                    value={filters.stage}
-                    onChange={e => setFilters(f => ({ ...f, stage: e.target.value }))}
-                  >
-                    <option value="">Any stage</option>
-                    {STAGES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Language</label>
+                  <select className="input-base text-sm" value={filters.language}
+                    onChange={e => setFilters(f => ({ ...f, language: e.target.value }))}>
+                    <option value="">Any language</option>
+                    {LANGUAGES.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Sector</label>
-                  <select
-                    className="input-base text-sm"
-                    value={filters.sector}
-                    onChange={e => setFilters(f => ({ ...f, sector: e.target.value }))}
-                  >
-                    <option value="">Any sector</option>
-                    {SECTORS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
+                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Interests</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {TAGS.map((tag) => {
+                      const selected = filters.tags.includes(tag);
+                      return (
+                        <button key={tag} onClick={() => toggleTag(tag)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all
+                                     ${selected ? 'border-blue-electric bg-blue-electric/10 text-blue-electric'
+                                       : 'border-border-subtle text-text-secondary hover:border-border'}`}>
+                          #{tag}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1.5">Looking for</label>
-                  <select
-                    className="input-base text-sm"
-                    value={filters.looking_for}
-                    onChange={e => setFilters(f => ({ ...f, looking_for: e.target.value }))}
-                  >
-                    <option value="">Anything</option>
-                    {LOOKING_FOR.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
-                  </select>
-                </div>
-
-                <button
-                  onClick={() => setFilters({ stage: '', sector: '', looking_for: '' })}
-                  className="text-text-muted hover:text-text-secondary text-xs transition-colors"
-                >
+                <button onClick={() => setFilters(EMPTY_FILTERS)}
+                  className="text-text-muted hover:text-text-secondary text-xs transition-colors">
                   Clear filters
                 </button>
               </motion.div>

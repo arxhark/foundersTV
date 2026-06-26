@@ -1,13 +1,23 @@
 const mongoose = require('mongoose');
 
+// A connection between two founders. Created the moment one person saves the
+// other (pending); becomes `mutual` once both have saved. Direct messaging is
+// unlocked only on mutual connections.
 const connectionSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  savedUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  notes: { type: String, default: '', maxlength: 500 },
-  connectedAt: { type: Date, default: Date.now },
-});
+  // Always stored sorted (low _id first) so a pair maps to exactly one doc
+  users: {
+    type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    validate: [(arr) => arr.length === 2, 'A connection must have exactly 2 users'],
+  },
+  savedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  mutual: { type: Boolean, default: false },
+}, { timestamps: true });
 
-// Prevent duplicate saved contacts
-connectionSchema.index({ userId: 1, savedUserId: 1 }, { unique: true });
+connectionSchema.index({ users: 1 }, { unique: true });
+
+// Returns the two user ids sorted as strings — used to build a stable pair key
+connectionSchema.statics.sortedPair = function (a, b) {
+  return [a.toString(), b.toString()].sort();
+};
 
 module.exports = mongoose.model('Connection', connectionSchema);

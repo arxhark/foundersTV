@@ -3,12 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Mic, MicOff, Video, VideoOff, SkipForward, PhoneOff,
-  Bookmark, BookmarkCheck, AlertTriangle, Send, Clock,
+  Bookmark, BookmarkCheck, AlertTriangle, Send, Clock, UserPlus, Ban, Check,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { useWebRTC } from '../hooks/useWebRTC';
-import { userApi } from '../services/api';
+import { userApi, connectionApi } from '../services/api';
 import VideoPlayer from '../components/video/VideoPlayer';
 import FounderCard from '../components/ui/FounderCard';
 import Spinner from '../components/ui/Spinner';
@@ -24,7 +24,10 @@ const REPORT_REASONS = [
   { value: 'spam', label: 'Spam' },
   { value: 'inappropriate', label: 'Inappropriate' },
   { value: 'bot', label: 'Bot' },
+  { value: 'harassment', label: 'Harassment' },
 ];
+
+const MODAL_SECONDS = 15;
 
 export default function Room() {
   const { user } = useAuth();
@@ -48,11 +51,20 @@ export default function Room() {
   const [showReport, setShowReport] = useState(false);
   const [reportSent, setReportSent] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [reactions, setReactions] = useState([]);
+  const [mutual, setMutual] = useState(false);
+  const [skipLimited, setSkipLimited] = useState(false);
+
+  // Post-call mutual-connection modal
+  const [postCallPeer, setPostCallPeer] = useState(null);
+  const [postCallState, setPostCallState] = useState('idle'); // idle|saving|saved|mutual
+  const [modalCountdown, setModalCountdown] = useState(MODAL_SECONDS);
 
   const timerRef = useRef(null);
   const callStartRef = useRef(null);
   const chatEndRef = useRef(null);
   const isInitiatorRef = useRef(false);
+  const peerRef = useRef(null);
 
   // Format elapsed seconds as mm:ss
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -76,9 +88,11 @@ export default function Room() {
     sendCallEnded(duration);
     closePeerConnection();
     setPeer(null);
+    peerRef.current = null;
     setMessages([]);
     setElapsed(0);
     setSaved(false);
+    setMutual(false);
     setReportSent(false);
     setShowReport(false);
     isInitiatorRef.current = false;
@@ -111,28 +125,47 @@ export default function Room() {
   useEffect(() => {
     if (!socket) return;
 
-    const onMatchFound = async ({ peer: peerProfile }) => {
+    const onMatchFound = async ({ peer: peerProfile, initiator }) => {
       setPeer(peerProfile);
+      peerRef.current = peerProfile;
+      setPostCallPeer(null);
       setCallState(CALL_STATES.CONNECTED);
       setMessages([]);
+      setReactions([]);
       setSaved(false);
+      setMutual(false);
       startTimer();
 
-      // Coin flip: lower socket id is initiator
-      isInitiatorRef.current = socket.id < peerProfile._id?.toString();
+      // The server assigns who creates the offer to avoid WebRTC glare
+      isInitiatorRef.current = !!initiator;
       if (isInitiatorRef.current) await initiateCall();
     };
+
+    const onReaction = ({ emoji }) => spawnReaction(emoji);
 
     const onWaiting = () => setCallState(CALL_STATES.WAITING);
     const onTimeout = () => { resetCall(); setCallState(CALL_STATES.TIMEOUT); };
     const onPeerDisconnected = () => {
+      const last = peerRef.current;
       resetCall();
-      socket.emit('join-queue', { filters });
-      setCallState(CALL_STATES.WAITING);
+      if (last?._id) {
+        // Offer a final chance to connect before moving on
+        setPostCallPeer(last);
+        setPostCallState('idle');
+        setModalCountdown(MODAL_SECONDS);
+      } else {
+        socket.emit('join-queue', { filters });
+        setCallState(CALL_STATES.WAITING);
+      }
     };
 
     const onChatMessage = ({ message, from, timestamp }) => {
       setMessages((prev) => [...prev, { message, from, timestamp, mine: false }]);
+    };
+
+    const onSkipLimit = () => {
+      setSkipLimited(true);
+      setTimeout(() => setSkipLimited(false), 5000);
     };
 
     socket.on('match-found', onMatchFound);
@@ -143,6 +176,8 @@ export default function Room() {
     socket.on('webrtc-answer', handleAnswer);
     socket.on('ice-candidate', handleIceCandidate);
     socket.on('chat-message', onChatMessage);
+    socket.on('reaction', onReaction);
+    socket.on('skip-limit', onSkipLimit);
 
     return () => {
       socket.off('match-found', onMatchFound);
@@ -153,8 +188,19 @@ export default function Room() {
       socket.off('webrtc-answer', handleAnswer);
       socket.off('ice-candidate', handleIceCandidate);
       socket.off('chat-message', onChatMessage);
+      socket.off('reaction', onReaction);
+      socket.off('skip-limit', onSkipLimit);
     };
   }, [socket, filters, initiateCall, handleOffer, handleAnswer, handleIceCandidate, resetCall]);
+
+  // Post-call modal countdown → auto-skip to next at zero
+  useEffect(() => {
+    if (!postCallPeer) return undefined;
+    if (modalCountdown <= 0) { continueNext(); return undefined; }
+    const t = setTimeout(() => setModalCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postCallPeer, modalCountdown]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -162,9 +208,30 @@ export default function Room() {
   }, [messages]);
 
   const handleNext = () => {
+    const last = peerRef.current;
     resetCall();
-    socket?.emit('next-founder');
-    setCallState(CALL_STATES.WAITING);
+    socket?.emit('end-call'); // release the current peer
+    if (last?._id) {
+      setPostCallPeer(last);
+      setPostCallState(saved ? 'saved' : 'idle');
+      setModalCountdown(MODAL_SECONDS);
+    } else {
+      socket?.emit('join-queue', { filters });
+      setCallState(CALL_STATES.WAITING);
+    }
+  };
+
+  // Spawn a floating reaction that drifts up and removes itself
+  const spawnReaction = (emoji) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const left = 20 + Math.random() * 50; // random horizontal position (%)
+    setReactions((prev) => [...prev, { id, emoji, left }]);
+    setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== id)), 2600);
+  };
+
+  const sendReaction = (emoji) => {
+    socket?.emit('reaction', { emoji });
+    spawnReaction(emoji);
   };
 
   const handleLeave = () => {
@@ -184,8 +251,9 @@ export default function Room() {
   const handleSaveContact = async () => {
     if (!peer?._id || saved) return;
     try {
-      await userApi.saveContact(peer._id);
+      const { data } = await connectionApi.save(peer._id);
       setSaved(true);
+      if (data.mutual) setMutual(true);
     } catch (err) {
       setSaveError(err.response?.data?.error || 'Could not save');
       setTimeout(() => setSaveError(''), 3000);
@@ -198,6 +266,36 @@ export default function Room() {
     setReportSent(true);
     setShowReport(false);
     setTimeout(() => handleNext(), 1000);
+  };
+
+  // --- Post-call connection modal ---
+  const savePostCall = async () => {
+    if (!postCallPeer?._id) return;
+    setPostCallState('saving');
+    try {
+      const { data } = await connectionApi.save(postCallPeer._id);
+      setPostCallState(data.mutual ? 'mutual' : 'saved');
+    } catch {
+      setPostCallState('idle');
+    }
+  };
+
+  const blockPeer = async () => {
+    const target = postCallPeer || peer;
+    if (target?._id) await userApi.blockUser(target._id).catch(() => {});
+    setPostCallPeer(null);
+    handleLeave();
+  };
+
+  const continueNext = () => {
+    setPostCallPeer(null);
+    socket?.emit('join-queue', { filters });
+    setCallState(CALL_STATES.WAITING);
+  };
+
+  const stopAfterCall = () => {
+    setPostCallPeer(null);
+    handleLeave();
   };
 
   // --- RENDER ---
@@ -218,6 +316,61 @@ export default function Room() {
 
   return (
     <div className="h-screen bg-bg-primary flex flex-col overflow-hidden pt-16">
+      {/* Post-call mutual connection modal */}
+      <AnimatePresence>
+        {postCallPeer && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 16 }} animate={{ scale: 1, y: 0 }}
+              className="card p-6 w-full max-w-sm text-center"
+            >
+              <p className="text-text-secondary text-sm mb-4">
+                {postCallState === 'mutual'
+                  ? "It's a match! You're now connected."
+                  : `Want to connect with ${postCallPeer.name}?`}
+              </p>
+
+              <FounderCard founder={postCallPeer} compact />
+
+              <div className="mt-5 space-y-2">
+                {postCallState === 'mutual' ? (
+                  <div className="flex items-center justify-center gap-2 text-green-connected font-semibold py-2">
+                    <Check size={18} /> Connected — say hi in Connections
+                  </div>
+                ) : (
+                  <button
+                    onClick={savePostCall}
+                    disabled={postCallState !== 'idle'}
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                  >
+                    {postCallState === 'saving' && <Spinner size={18} />}
+                    {postCallState === 'idle' && <><UserPlus size={18} /> Save contact</>}
+                    {postCallState === 'saved' && <><Check size={18} /> Request sent</>}
+                  </button>
+                )}
+
+                <div className="flex gap-2">
+                  <button onClick={continueNext} className="btn-secondary flex-1 text-sm">
+                    Next person ({modalCountdown})
+                  </button>
+                  <button onClick={stopAfterCall} className="btn-secondary flex-1 text-sm">Stop</button>
+                </div>
+
+                <button
+                  onClick={blockPeer}
+                  className="flex items-center justify-center gap-1.5 w-full text-text-muted hover:text-red-disconnect text-xs transition-colors pt-1"
+                >
+                  <Ban size={12} /> Block this user
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle bg-bg-primary/80 backdrop-blur">
         <div className="flex items-center gap-2">
@@ -245,7 +398,7 @@ export default function Room() {
                               : 'border-border-subtle hover:border-blue-electric/40 hover:text-blue-electric text-text-secondary'}`}
               >
                 {saved ? <BookmarkCheck size={14} /> : <Bookmark size={14} />}
-                {saved ? 'Saved' : 'Save'}
+                {mutual ? 'Connected!' : saved ? 'Saved' : 'Save'}
               </button>
 
               <button
@@ -281,6 +434,14 @@ export default function Room() {
                 {r.label}
               </button>
             ))}
+            <div className="border-t border-border-subtle my-1" />
+            <button
+              onClick={blockPeer}
+              className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-red-disconnect
+                         hover:bg-red-disconnect/10 transition-colors"
+            >
+              <Ban size={14} /> Block user
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -355,6 +516,25 @@ export default function Room() {
                     label="You"
                   />
                 </div>
+
+                {/* Floating reactions */}
+                <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                  <AnimatePresence>
+                    {reactions.map((r) => (
+                      <motion.div
+                        key={r.id}
+                        initial={{ opacity: 0, y: 0, scale: 0.5 }}
+                        animate={{ opacity: 1, y: -220, scale: 1.4 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 2.4, ease: 'easeOut' }}
+                        className="absolute bottom-24 text-5xl"
+                        style={{ left: `${r.left}%` }}
+                      >
+                        {r.emoji}
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -426,6 +606,22 @@ export default function Room() {
 
       {/* Controls bar */}
       <div className="border-t border-border-subtle bg-bg-secondary/80 backdrop-blur px-4 py-4">
+        {/* Reactions row */}
+        {callState === CALL_STATES.CONNECTED && (
+          <div className="flex items-center justify-center gap-2 mb-3">
+            {['👏', '🔥', '🤝', '💡'].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => sendReaction(emoji)}
+                className="text-xl w-10 h-10 rounded-full border border-border-subtle hover:border-blue-electric/40
+                           hover:bg-bg-card active:scale-90 transition-all"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <button
             onClick={toggleMute}
@@ -475,6 +671,9 @@ export default function Room() {
         )}
         {reportSent && (
           <p className="text-center text-green-connected text-xs mt-2">Report submitted. Moving to next founder...</p>
+        )}
+        {skipLimited && (
+          <p className="text-center text-yellow-400 text-xs mt-2">You've hit the skip limit (30/hour). Take a breather.</p>
         )}
       </div>
     </div>

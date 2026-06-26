@@ -7,8 +7,11 @@ import Auth from './pages/Auth';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Room from './pages/Room';
+import PrivateRoom from './pages/PrivateRoom';
 import Profile from './pages/Profile';
-import Contacts from './pages/Contacts';
+import PublicProfile from './pages/PublicProfile';
+import Connections from './pages/Connections';
+import Feed from './pages/Feed';
 import Spinner from './components/ui/Spinner';
 
 // Route guard: requires auth + completed onboarding
@@ -49,8 +52,8 @@ function FullscreenLoader() {
 
 export default function App() {
   const location = useLocation();
-  // Hide navbar inside the room
-  const hideNavbar = location.pathname === '/room';
+  // Hide navbar inside any video room (random or private)
+  const hideNavbar = location.pathname === '/room' || location.pathname.startsWith('/room/');
 
   return (
     <>
@@ -75,12 +78,28 @@ export default function App() {
             <PrivateRoute><Room /></PrivateRoute>
           } />
 
-          <Route path="/profile" element={
+          <Route path="/room/:id" element={
+            <PrivateRoute><PrivateRoom /></PrivateRoute>
+          } />
+
+          <Route path="/feed" element={
+            <PrivateRoute><Feed /></PrivateRoute>
+          } />
+
+          <Route path="/connections" element={
+            <PrivateRoute><Connections /></PrivateRoute>
+          } />
+
+          <Route path="/profile/edit" element={
             <PrivateRoute><Profile /></PrivateRoute>
           } />
 
-          <Route path="/contacts" element={
-            <PrivateRoute><Contacts /></PrivateRoute>
+          <Route path="/profile/:id" element={
+            <PrivateRoute><PublicProfile /></PrivateRoute>
+          } />
+
+          <Route path="/profile" element={
+            <PrivateRoute><Profile /></PrivateRoute>
           } />
 
           {/* Fallback */}
